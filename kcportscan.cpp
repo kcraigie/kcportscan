@@ -48,6 +48,8 @@ static unsigned long long getticks()
 
 int main(int argc, char * argv[])
 {
+  int needNewline = 0;
+
   for(int i=1;i<argc;i++) {
     switch(argv[i][0]) {
     case '-':
@@ -104,7 +106,7 @@ int main(int argc, char * argv[])
   if(getrlimit(RLIMIT_NOFILE, &rlim) == 0) {
     g_maxSockets = rlim.rlim_cur;
   }
-  fprintf(stderr, "Maximum number of sockets is: %d\n", g_maxSockets);
+  fprintf(stderr, "Maximum number of file descriptors: %d\n", g_maxSockets);
   g_sinfos = (SocketInfo_t*)malloc(sizeof(SocketInfo_t) * g_maxSockets);
   g_pollfds = (pollfd*)malloc(sizeof(pollfd) * g_maxSockets);
   g_pollfdsToSocketIndex = (int*)malloc(sizeof(int) * g_maxSockets);
@@ -138,11 +140,17 @@ int main(int argc, char * argv[])
               if(errno == EINPROGRESS) {
                 ret = 0;
               } else {
-                fprintf(stderr, "Unknown error on port %d: %d\n", g_nextPort, errno);
+                fprintf(stderr, "Unknown error connecting to port %d: %d\n", g_nextPort, errno);
               }
             } else if(ret==0) {
-              printf("Port %d accepted IPv4 TCP connection immediately!\n", ntohs(sa.sin_port));
+              printf("%sPort %d accepted IPv4 TCP connection immediately\n", (needNewline?"\n":""), ntohs(sa.sin_port));
+              needNewline = 0;
+              // Just clean it up like an error
+              ret = -1;
             }
+
+          } else {
+            fprintf(stderr, "Failed to make socket non-blocking: %d\n", errno);
           }
 
           // Save socket or clean up
@@ -158,9 +166,13 @@ int main(int argc, char * argv[])
             s = -1;
           }
 
-        } // if(s!=-1) {
-
-        g_nextPort++;
+          g_nextPort++;
+        } else if(errno == EMFILE) {
+          // Out of file descriptors
+          break;
+        } else {
+          fprintf(stderr, "Unknown error creating socket: %d\n", errno);
+        }
       } // if(!g_sinfos[j].isValid) {
 
       if(g_sinfos[j].isValid) {
@@ -190,7 +202,11 @@ int main(int argc, char * argv[])
           socklen_t errlen = sizeof(err);
           if(getsockopt(sinfo->socket, SOL_SOCKET, SO_ERROR, &err, &errlen)==0) {
             if(err==0) {
-              printf("\rPort %d accepted IPv4 TCP connection\n", sinfo->port);
+              printf("%sPort %d accepted IPv4 TCP connection (indexes: %d and %d)\n", (needNewline?"\n":""), sinfo->port, j, g_pollfdsToSocketIndex[j]);
+              needNewline = 0;
+              if(sinfo->port>10000) {
+                int k = 0;
+              }
             } else {
               // printf("\rPort %d rejected IPv4 TCP connection: %d\n", sinfo->port, err);
             }
@@ -207,6 +223,11 @@ int main(int argc, char * argv[])
 
     printf("...%d", g_nextPort);
     fflush(stdout);
+    needNewline = 1;
 
   } // while(1) {
+
+  if(needNewline) {
+    printf("\n");
+  }
 }
