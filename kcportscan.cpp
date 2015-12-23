@@ -7,6 +7,7 @@
 #include <sys/fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 typedef unsigned char uint8_t;
 
@@ -15,7 +16,10 @@ struct SocketInfo_t {
   // int address;
   int port;
   int isValid;
+  unsigned long long startTicks;
 };
+
+static unsigned long long g_timeout = 3000ULL;
 
 static int g_maxSockets = 1024;
 static int g_numSockets = 0;
@@ -30,7 +34,16 @@ static unsigned int g_address = 0;
 
 static void printUsage(char * argv0)
 {
-  fprintf(stderr, "Usage: %s -a [address]\n", argv0);
+  fprintf(stderr, "Usage: %s -4 [ipv4_address] -d <timeout>\n", argv0);
+}
+
+static unsigned long long getticks()
+{
+  struct timeval tv;
+  if(gettimeofday(&tv, NULL)==-1) {
+    return 0;
+  }
+  return (unsigned long long)tv.tv_sec + (unsigned long long)tv.tv_usec / 1000ULL;
 }
 
 int main(int argc, char * argv[])
@@ -39,7 +52,7 @@ int main(int argc, char * argv[])
     switch(argv[i][0]) {
     case '-':
       switch(argv[i][1]) {
-      case 'a':
+      case '4':
         {
           if(i+1>argc) {
             printUsage(argv[0]);
@@ -59,6 +72,19 @@ int main(int argc, char * argv[])
             g_address |= (unsigned int)i1 << 16 & 0x00ff0000;
             g_address |= (unsigned int)i2 << 8 & 0x0000ff00;
             g_address |= (unsigned int)i3 << 0 & 0x000000ff;
+          }
+        }
+        break;
+      case 't':
+        {
+          if(i+1>argc) {
+            printUsage(argv[0]);
+            return 1;
+          }
+          int i0;
+          if(sscanf(argv[i+1], "%d", &i0)==1) {
+            // User specified timeout
+            g_timeout = (unsigned long long)i0 * 1000ULL;
           }
         }
         break;
@@ -90,7 +116,7 @@ int main(int argc, char * argv[])
     g_numpollfds = 0;
 
     // Fill up and compact socket array while refilling pollfd array
-    for(j=0;j<g_maxSockets;j++) {
+    for(j=0;j<g_maxSockets && g_nextPort<=65535;j++) {
       if(!g_sinfos[j].isValid) {
         ret = -1;
 
@@ -125,6 +151,7 @@ int main(int argc, char * argv[])
             // g_sinfos[j].address = g_address;
             g_sinfos[j].port = g_nextPort;
             g_sinfos[j].isValid = 1;
+            g_sinfos[j].startTicks = getticks();
             g_numSockets++;
           } else {
             close(s);
@@ -146,22 +173,40 @@ int main(int argc, char * argv[])
 
     } // for(;j<g_maxSockets;j++) {
 
-    do {
-      ret = poll(g_pollfds, g_numpollfds, 200);
-    } while(ret==0);
+    if(g_numpollfds==0) {
+      break;
+    }
+
+    ret = poll(g_pollfds, g_numpollfds, 1000);
 
     if(ret == -1) {
       fprintf(stderr, "Unknown error in poll: %d\n", errno);
-    } else if(ret>0) {
+    } else {
+      unsigned long long nowTicks = getticks();
       for(j=0;j<g_numpollfds;j++) {
+        SocketInfo_t * sinfo = &g_sinfos[g_pollfdsToSocketIndex[j]];
         if(g_pollfds[j].revents & POLLOUT) {
-          SocketInfo_t * sinfo = &g_sinfos[g_pollfdsToSocketIndex[j]];
-          printf("Port %d accepted IPv4 TCP connection\n", sinfo->port);
+          int err;
+          socklen_t errlen = sizeof(err);
+          if(getsockopt(sinfo->socket, SOL_SOCKET, SO_ERROR, &err, &errlen)==0) {
+            if(err==0) {
+              printf("\rPort %d accepted IPv4 TCP connection\n", sinfo->port);
+            } else {
+              // printf("\rPort %d rejected IPv4 TCP connection: %d\n", sinfo->port, err);
+            }
+          }
+          close(sinfo->socket);
+          sinfo->isValid = 0;
+        } else if(sinfo->startTicks - nowTicks > 1000ULL) {
+          // printf("Port %d timed out on IPv4 TCP connection\n", sinfo->port);
           close(sinfo->socket);
           sinfo->isValid = 0;
         }
       }
     }
+
+    printf("...%d", g_nextPort);
+    fflush(stdout);
 
   } // while(1) {
 }
