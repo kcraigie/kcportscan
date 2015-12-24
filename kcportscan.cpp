@@ -126,7 +126,8 @@ int main(int argc, char * argv[])
         if(s!=-1) {
 
           // Make socket asynchronous
-          ret = fcntl(s, F_SETFL, O_NONBLOCK);
+          int flags = fcntl(s, F_GETFL, 0);
+          ret = fcntl(s, F_SETFL, flags | O_NONBLOCK);
           if(ret!=-1) {
 
             // Set up address and port
@@ -189,20 +190,21 @@ int main(int argc, char * argv[])
       break;
     }
 
-    ret = poll(g_pollfds, g_numpollfds, 1000);
+    ret = poll(g_pollfds, g_numpollfds, g_timeout);
 
     if(ret == -1) {
-      fprintf(stderr, "Unknown error in poll: %d\n", errno);
-    } else {
+      fprintf(stderr, "Unknown error polling %d fds: %d\n", g_numpollfds, errno);
+    } else if(ret>0) {
       unsigned long long nowTicks = getticks();
       for(j=0;j<g_numpollfds;j++) {
         SocketInfo_t * sinfo = &g_sinfos[g_pollfdsToSocketIndex[j]];
+        int shouldCloseSocket = 0;
         if(g_pollfds[j].revents & POLLOUT) {
           int err;
           socklen_t errlen = sizeof(err);
-          if(getsockopt(sinfo->socket, SOL_SOCKET, SO_ERROR, &err, &errlen)==0) {
+          if(getsockopt(sinfo->socket, SOL_SOCKET, SO_ERROR, &err, &errlen)!=-1) {
             if(err==0) {
-              printf("%sPort %d accepted IPv4 TCP connection (indexes: %d and %d)\n", (needNewline?"\n":""), sinfo->port, j, g_pollfdsToSocketIndex[j]);
+              printf("%sPort %d accepted IPv4 TCP connection\n", (needNewline?"\n":""), sinfo->port);
               needNewline = 0;
               if(sinfo->port>10000) {
                 int k = 0;
@@ -210,11 +212,21 @@ int main(int argc, char * argv[])
             } else {
               // printf("\rPort %d rejected IPv4 TCP connection: %d\n", sinfo->port, err);
             }
+          } else {
+            fprintf(stderr, "Unknown error getting connect status: %d\n", errno);
           }
-          close(sinfo->socket);
-          sinfo->isValid = 0;
-        } else if(sinfo->startTicks - nowTicks > 1000ULL) {
+          shouldCloseSocket = 1;
+        } else if(g_pollfds[j].revents & POLLERR) {
+          // printf("Port %d error on IPv4 TCP connection\n", sinfo->port);
+          shouldCloseSocket = 1;
+        } else if(g_pollfds[j].revents) {
+          fprintf(stderr, "Unknown poll events received 0x%x\n", g_pollfds[j].revents);
+          shouldCloseSocket = 1;
+        } else if(sinfo->startTicks - nowTicks > g_timeout) {
           // printf("Port %d timed out on IPv4 TCP connection\n", sinfo->port);
+          shouldCloseSocket = 1;
+        }
+        if(shouldCloseSocket) {
           close(sinfo->socket);
           sinfo->isValid = 0;
         }
