@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <stdarg.h>
+#include <string.h>
 
 typedef unsigned char uint8_t;
 typedef unsigned int uint_t;
@@ -23,10 +24,11 @@ struct SocketInfo_t {
 
 static unsigned long long g_timeout = 3000ULL;
 static int g_maxSockets = 1024;
+static char * g_portToServiceMap[64*1024];
 
 static void printUsage(char * argv0)
 {
-  printf("Usage: %s -4 [ipv4_address] -t <timeout_ms>\n", argv0);
+  printf("Usage: %s -4 [ipv4_address] -t <timeout_ms> -s <services_file>\n", argv0);
 }
 
 static unsigned long long getticks()
@@ -74,7 +76,7 @@ static void portScanAddress(uint_t address)
   int numpollfds = 0;
   int nextPort = 1;
 
-  mylogn("Portscanning: %d.%d.%d.%d:1",
+  mylogn("Portscanning: %d.%d.%d.%d",
          address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff);
 
   // Main loop
@@ -112,9 +114,10 @@ static void portScanAddress(uint_t address)
                       nextPort, errno);
               }
             } else if(ret==0) {
-              mylog("%d.%d.%d.%d:%d accepted IPv4 TCP connection immediately\n",
+              uint_t hsPort = ntohs(sa.sin_port);
+              mylog("%d.%d.%d.%d:%d accepted IPv4 TCP connection immediately (Service guess: '%s')\n",
                     address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
-                    ntohs(sa.sin_port));
+                    hsPort, (g_portToServiceMap[hsPort]!=NULL?g_portToServiceMap[hsPort]:"?"));
               // Just clean it up like an error
               ret = -1;
             }
@@ -173,9 +176,9 @@ static void portScanAddress(uint_t address)
           socklen_t errlen = sizeof(err);
           if(getsockopt(sinfo->socket, SOL_SOCKET, SO_ERROR, &err, &errlen)!=-1) {
             if(err==0) {
-              mylog("%d.%d.%d.%d:%d accepted IPv4 TCP connection\n",
+              mylog("%d.%d.%d.%d:%d accepted IPv4 TCP connection (Service guess: '%s')\n",
                     address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
-                    sinfo->port);
+                    sinfo->port, (g_portToServiceMap[sinfo->port]!=NULL?g_portToServiceMap[sinfo->port]:"?"));
             // } else {
             //   printf("%d.%d.%d.%d:%d rejected IPv4 TCP connection: %d\n",
             //          address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
@@ -222,8 +225,30 @@ static uint_t bitmaskifyPrefix(uint_t iPrefix)
   return ret;
 }
 
+static void parseEtcServicesFile(const char * etcServicesPathname)
+{
+  mylog("Parsing services file at: %s\n", etcServicesPathname);
+  FILE * fh = fopen(etcServicesPathname, "r");
+  if(fh==NULL) {
+    return;
+  }
+  char buf[4096];
+  while(fgets(buf, sizeof(buf), fh)) {
+    uint_t port;
+    char svcbuf[256];
+    if(sscanf(buf, "%s%*[\t]%d/%*s", svcbuf, &port) == 2) {
+      if(port>=0 && port<64*1024) {
+        // Never freeing string as it should last the lifetime of the process
+        g_portToServiceMap[port] = strdup(svcbuf);
+      }
+    }
+  }
+  fclose(fh);
+}
+
 int main(int argc, char * argv[])
 {
+  char * etcServicesPathname = strdup("/etc/services");
   uint_t address = 0;
   uint_t prefix = 0;
 
@@ -263,6 +288,21 @@ int main(int argc, char * argv[])
           }
         }
         break;
+      case 's':
+        {
+          if(i+1>argc) {
+            printUsage(argv[0]);
+            return 1;
+          }
+          if(etcServicesPathname!=NULL) {
+            free(etcServicesPathname);
+          }
+          etcServicesPathname = strdup(argv[i+1]);
+        }
+        break;
+      default:
+        printUsage(argv[0]);
+        return 1;
       }
     }
   }
@@ -280,6 +320,10 @@ int main(int argc, char * argv[])
   }
   mylog("Maximum number of file descriptors: %d\n", g_maxSockets);
 
+  if(etcServicesPathname) {
+    parseEtcServicesFile(etcServicesPathname);
+  }
+
   // Portscan each address in the block
   uint_t prefixBitmask = bitmaskifyPrefix(prefix);
   mylog("Address block to portscan: %d.%d.%d.%d/%d\n",
@@ -289,6 +333,10 @@ int main(int argc, char * argv[])
       (address & prefixBitmask) == (address2 & prefixBitmask); // Continue while address in range
       address2++) {                                            // Increment to next address
     portScanAddress(address2);
+  }
+
+  if(etcServicesPathname!=NULL) {
+    free(etcServicesPathname);
   }
 
   return 0;
