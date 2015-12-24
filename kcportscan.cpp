@@ -10,6 +10,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+#define THROTTLE_MS 100ULL
+
 typedef unsigned char uint8_t;
 typedef unsigned int uint_t;
 
@@ -36,7 +38,7 @@ static unsigned long long getticks()
   if(gettimeofday(&tv, NULL)==-1) {
     return 0;
   }
-  return (unsigned long long)tv.tv_sec + (unsigned long long)tv.tv_usec / 1000ULL;
+  return (unsigned long long)tv.tv_sec * 1000ULL + (unsigned long long)tv.tv_usec / 1000ULL;
 }
 
 static int g_needNewline = 0;
@@ -74,6 +76,11 @@ static void portScanAddress(uint_t address)
   int numSockets = 0;
   int numpollfds = 0;
   int nextPort = 1;
+
+  // Initialize socket info array
+  for(int i=0;i<g_maxSockets;i++) {
+    sinfos[i].isValid = 0;
+  }
 
   mylogn("Portscanning: %d.%d.%d.%d",
          address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff);
@@ -166,7 +173,10 @@ static void portScanAddress(uint_t address)
       break;
     }
 
-    ret = poll(pollfds, numpollfds, g_timeout);
+    // Throttle a little this this doesn't turn into a busy loop
+    usleep(THROTTLE_MS*1000ULL);
+
+    ret = poll(pollfds, numpollfds, (g_timeout>THROTTLE_MS?g_timeout-THROTTLE_MS:0));
 
     if(ret == -1) {
       mylog("Unknown error polling %d fds: %d\n", numpollfds, errno);
@@ -196,7 +206,7 @@ static void portScanAddress(uint_t address)
           // mylog("Port %d error on IPv4 TCP connection\n", sinfo->port);
           shouldCloseSocket = 1;
         } else if(pollfds[j].revents) {
-          mylog("Unknown poll events received 0x%x\n", pollfds[j].revents);
+          mylog("Unknown poll events received on port %d: 0x%x\n", sinfo->port, pollfds[j].revents);
           shouldCloseSocket = 1;
         } else if(sinfo->startTicks - nowTicks > g_timeout) {
           // mylog("Port %d timed out on IPv4 TCP connection\n", sinfo->port);
