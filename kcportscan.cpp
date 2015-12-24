@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/poll.h>
@@ -28,7 +27,7 @@ static char * g_portToServiceMap[64*1024];
 
 static void printUsage(char * argv0)
 {
-  printf("Usage: %s -4 [ipv4_address] -t <timeout_ms> -s <services_file>\n", argv0);
+  printf("Usage: %s -4 [ipv4_address</prefix>] -t <timeout_ms> -s <services_file>\n", argv0);
 }
 
 static unsigned long long getticks()
@@ -108,6 +107,10 @@ static void portScanAddress(uint_t address)
             if(ret==-1) {
               if(errno == EINPROGRESS) {
                 ret = 0;
+              } else if(errno == ENETUNREACH) {
+                mylog("Failed to reach network: %d.%d.%d.%d\n",
+                      address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff);
+                break;
               } else {
                 mylog("Unknown error connecting to %d.%d.%d.%d:%d: %d\n",
                       address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
@@ -159,6 +162,7 @@ static void portScanAddress(uint_t address)
     } // for(;j<g_maxSockets;j++) {
 
     if(numpollfds==0) {
+      // No valid sockets to poll
       break;
     }
 
