@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <stdarg.h>
 
 typedef unsigned char uint8_t;
 typedef unsigned int uint_t;
@@ -25,7 +26,7 @@ static int g_maxSockets = 1024;
 
 static void printUsage(char * argv0)
 {
-  fprintf(stderr, "Usage: %s -4 [ipv4_address] -t <timeout_ms>\n", argv0);
+  printf("Usage: %s -4 [ipv4_address] -t <timeout_ms>\n", argv0);
 }
 
 static unsigned long long getticks()
@@ -37,6 +38,32 @@ static unsigned long long getticks()
   return (unsigned long long)tv.tv_sec + (unsigned long long)tv.tv_usec / 1000ULL;
 }
 
+static int g_needNewline = 0;
+
+// Normal log
+static void mylog(const char * fmt, ...)
+{
+  va_list args;
+  if(g_needNewline) {
+    printf("\n");
+    g_needNewline = 0;
+  }
+  va_start(args, fmt);
+  vprintf(fmt, args);
+  va_end(args);
+}
+
+// Avoid newlines until next normal log
+static void mylogn(const char * fmt, ...)
+{
+  va_list args;
+  va_start(args, fmt);
+  vprintf(fmt, args);
+  va_end(args);
+  fflush(stdout);
+  g_needNewline = 1;
+}
+
 static void portScanAddress(uint_t address)
 {
   SocketInfo_t * sinfos = (SocketInfo_t*)malloc(sizeof(SocketInfo_t) * g_maxSockets);
@@ -46,6 +73,9 @@ static void portScanAddress(uint_t address)
   int numSockets = 0;
   int numpollfds = 0;
   int nextPort = 1;
+
+  mylogn("Portscanning: %d.%d.%d.%d:1",
+         address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff);
 
   // Main loop
   while(1) {
@@ -77,20 +107,20 @@ static void portScanAddress(uint_t address)
               if(errno == EINPROGRESS) {
                 ret = 0;
               } else {
-                fprintf(stderr, "\rUnknown error connecting to %d.%d.%d.%d:%d: %d\n",
-                        address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
-                        nextPort, errno);
+                mylog("Unknown error connecting to %d.%d.%d.%d:%d: %d\n",
+                      address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
+                      nextPort, errno);
               }
             } else if(ret==0) {
-              printf("%d.%d.%d.%d:%d accepted IPv4 TCP connection immediately\n",
-                     address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
-                     ntohs(sa.sin_port));
+              mylog("%d.%d.%d.%d:%d accepted IPv4 TCP connection immediately\n",
+                    address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
+                    ntohs(sa.sin_port));
               // Just clean it up like an error
               ret = -1;
             }
 
           } else {
-            fprintf(stderr, "\rFailed to make socket non-blocking: %d\n", errno);
+            mylog("Failed to make socket non-blocking: %d\n", errno);
           }
 
           // Save socket or clean up
@@ -111,7 +141,7 @@ static void portScanAddress(uint_t address)
           // Out of file descriptors
           break;
         } else {
-          fprintf(stderr, "\rUnknown error creating socket: %d\n", errno);
+          mylog("Unknown error creating socket: %d\n", errno);
         }
       } // if(!sinfos[j].isValid) {
 
@@ -132,7 +162,7 @@ static void portScanAddress(uint_t address)
     ret = poll(pollfds, numpollfds, g_timeout);
 
     if(ret == -1) {
-      fprintf(stderr, "\rUnknown error polling %d fds: %d\n", numpollfds, errno);
+      mylog("Unknown error polling %d fds: %d\n", numpollfds, errno);
     } else {
       unsigned long long nowTicks = getticks();
       for(j=0;j<numpollfds;j++) {
@@ -143,24 +173,26 @@ static void portScanAddress(uint_t address)
           socklen_t errlen = sizeof(err);
           if(getsockopt(sinfo->socket, SOL_SOCKET, SO_ERROR, &err, &errlen)!=-1) {
             if(err==0) {
-              printf("%d.%d.%d.%d:%d accepted IPv4 TCP connection\n",
-                     address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
-                     sinfo->port);
-            } else {
-              // printf("\rPort %d rejected IPv4 TCP connection: %d\n", sinfo->port, err);
+              mylog("%d.%d.%d.%d:%d accepted IPv4 TCP connection\n",
+                    address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
+                    sinfo->port);
+            // } else {
+            //   printf("%d.%d.%d.%d:%d rejected IPv4 TCP connection: %d\n",
+            //          address >> 24 & 0xff, address >> 16 & 0xff, address >> 8 & 0xff, address & 0xff,
+            //          sinfo->port, err);
             }
           } else {
-            fprintf(stderr, "\rUnknown error getting connect status: %d\n", errno);
+            mylog("Unknown error getting connect status: %d\n", errno);
           }
           shouldCloseSocket = 1;
         } else if(pollfds[j].revents & POLLERR) {
-          // printf("Port %d error on IPv4 TCP connection\n", sinfo->port);
+          // mylog("Port %d error on IPv4 TCP connection\n", sinfo->port);
           shouldCloseSocket = 1;
         } else if(pollfds[j].revents) {
-          fprintf(stderr, "\rUnknown poll events received 0x%x\n", pollfds[j].revents);
+          mylog("Unknown poll events received 0x%x\n", pollfds[j].revents);
           shouldCloseSocket = 1;
         } else if(sinfo->startTicks - nowTicks > g_timeout) {
-          // printf("Port %d timed out on IPv4 TCP connection\n", sinfo->port);
+          // mylog("Port %d timed out on IPv4 TCP connection\n", sinfo->port);
           shouldCloseSocket = 1;
         }
         if(shouldCloseSocket) {
@@ -170,10 +202,11 @@ static void portScanAddress(uint_t address)
       }
     }
 
-    fprintf(stderr, "...%d", nextPort);
-    fflush(stderr);
+    mylogn("...%d", nextPort);
 
   } // while(1) {
+
+  mylog("");
 
   free(sinfos);
   free(pollfds);
@@ -205,6 +238,7 @@ int main(int argc, char * argv[])
             printUsage(argv[0]);
             return 1;
           }
+          // Parse address block
           int i0, i1, i2, i3, i4 = 32;
           if(sscanf(argv[i+1], "%d.%d.%d.%d/%d", &i0, &i1, &i2, &i3, &i4)==5 ||
              sscanf(argv[i+1], "%d.%d.%d.%d", &i0, &i1, &i2, &i3)==4) {
@@ -223,8 +257,8 @@ int main(int argc, char * argv[])
             return 1;
           }
           int i0;
+          // Parse user-specified timeout
           if(sscanf(argv[i+1], "%d", &i0)==1) {
-            // User specified timeout
             g_timeout = (unsigned long long)i0;
           }
         }
@@ -239,21 +273,23 @@ int main(int argc, char * argv[])
     return 1;
   }
 
+  // Determine how many sockets we can create
   struct rlimit rlim;
   if(getrlimit(RLIMIT_NOFILE, &rlim) == 0) {
     g_maxSockets = rlim.rlim_cur;
   }
-  fprintf(stderr, "\rMaximum number of file descriptors: %d\n", g_maxSockets);
+  mylog("Maximum number of file descriptors: %d\n", g_maxSockets);
 
+  // Portscan each address in the block
   uint_t prefixBitmask = bitmaskifyPrefix(prefix);
-  fprintf(stderr, "\rAddress block to portscan: %d.%d.%d.%d/%d\n",
-          (address & prefixBitmask) >> 24 & 0xff, (address & prefixBitmask) >> 16 & 0xff,
-          (address & prefixBitmask) >> 8 & 0xff, (address & prefixBitmask) & 0xff, prefix);
+  mylog("Address block to portscan: %d.%d.%d.%d/%d\n",
+        (address & prefixBitmask) >> 24 & 0xff, (address & prefixBitmask) >> 16 & 0xff,
+        (address & prefixBitmask) >> 8 & 0xff, (address & prefixBitmask) & 0xff, prefix);
   for(uint_t address2 = address & prefixBitmask;               // Start with first address in range
       (address & prefixBitmask) == (address2 & prefixBitmask); // Continue while address in range
       address2++) {                                            // Increment to next address
-    fprintf(stderr, "\rPortscanning: %d.%d.%d.%d\n",
-            address2 >> 24 & 0xff, address2 >> 16 & 0xff, address2 >> 8 & 0xff, address2 & 0xff);
     portScanAddress(address2);
   }
+
+  return 0;
 }
