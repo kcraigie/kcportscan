@@ -46,8 +46,7 @@ int main(int argc, char * argv[])
     goto bail;;
   }
 
-  printf("Listening on: %d.%d.%d.%d:%d...", octets[0], octets[1], octets[2], octets[3], octets[4]);
-  fflush(stdout);
+  printf("Listening on: %d.%d.%d.%d:%d...\n", octets[0], octets[1], octets[2], octets[3], octets[4]);
   if(listen(ss, 1)!=0) {
     goto bail;
   }
