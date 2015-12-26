@@ -252,7 +252,7 @@ static void parseEtcServicesFile(const char * etcServicesPathname)
     char svcbuf[256];
     if(sscanf(buf, "%s%*[\t]%d/%*s", svcbuf, &port) == 2) {
       if(port>=0 && port<64*1024) {
-        // Never freeing string as it should last the lifetime of the process
+        // Never freeing string on purpose since it should last until the process exits
         g_portToServiceMap[port] = strdup(svcbuf);
       }
     }
@@ -330,7 +330,7 @@ int main(int argc, char * argv[])
   // Determine how many sockets we can create
   struct rlimit rlim;
   if(getrlimit(RLIMIT_NOFILE, &rlim) == 0) {
-    g_maxSockets = rlim.rlim_cur;
+    g_maxSockets = rlim.rlim_cur - 20; // Leave some room for existing FDs
   }
   mylog("Maximum number of file descriptors: %d\n", g_maxSockets);
 
