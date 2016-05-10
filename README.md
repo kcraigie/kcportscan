@@ -2,7 +2,7 @@
 About
 -----
 
-A simple port scanner written in C++ by Keith Craigie (https://kcraigie.com).  Uses poll() for single-threaded concurrency.
+A simple port scanner written in C by Keith Craigie (https://kcraigie.com).  Uses poll() for single-threaded concurrency.
 
 Usage
 -----

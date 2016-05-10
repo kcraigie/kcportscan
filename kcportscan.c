@@ -15,13 +15,13 @@
 typedef unsigned char uint8_t;
 typedef unsigned int uint_t;
 
-struct SocketInfo_t {
+typedef struct SocketInfo_s {
   int socket;
   uint_t address;
   int port;
   int isValid;
   unsigned long long startTicks;
-};
+} SocketInfo_t;
 
 static unsigned long long g_timeout = 3000ULL;
 static int g_maxSockets = 1024;
@@ -70,15 +70,16 @@ static void mylogn(const char * fmt, ...)
 static void portScanAddress(uint_t address)
 {
   SocketInfo_t * sinfos = (SocketInfo_t*)malloc(sizeof(SocketInfo_t) * g_maxSockets);
-  pollfd * pollfds = (pollfd*)malloc(sizeof(pollfd) * g_maxSockets);
+  struct pollfd * pollfds = (struct pollfd*)malloc(sizeof(struct pollfd) * g_maxSockets);
   int * pollfdsToSocketIndex = (int*)malloc(sizeof(int) * g_maxSockets);
 
   int numSockets = 0;
   int numpollfds = 0;
   int nextPort = 1;
+  int i;
 
   // Initialize socket info array
-  for(int i=0;i<g_maxSockets;i++) {
+  for(i=0;i<g_maxSockets;i++) {
     sinfos[i].isValid = 0;
   }
 
@@ -105,12 +106,12 @@ static void portScanAddress(uint_t address)
           if(ret!=-1) {
 
             // Set up address and port
-            sockaddr_in sa;
+            struct sockaddr_in sa;
             sa.sin_family = AF_INET;
             sa.sin_addr.s_addr = htonl(address);
             sa.sin_port = htons(nextPort);
 
-            ret = connect(s, (sockaddr*)&sa, sizeof(sa));
+            ret = connect(s, (struct sockaddr*)&sa, sizeof(sa));
             if(ret==-1) {
               if(errno == EINPROGRESS) {
                 ret = 0;
@@ -233,7 +234,8 @@ static void portScanAddress(uint_t address)
 static uint_t bitmaskifyPrefix(uint_t iPrefix)
 {
   uint_t ret = 0;
-  for(uint_t i=0;i<iPrefix;i++) {
+  uint_t i;
+  for(i=0;i<iPrefix;i++) {
     ret |= (uint_t)1 << (32U-i-1);
   }
   return ret;
@@ -265,9 +267,10 @@ int main(int argc, char * argv[])
   char * etcServicesPathname = strdup("/etc/services");
   uint_t address = 0;
   uint_t prefix = 0;
+  int i;
 
   // Parse command-line arguments
-  for(int i=1;i<argc;i++) {
+  for(i=1;i<argc;i++) {
     switch(argv[i][0]) {
     case '-':
       switch(argv[i][1]) {
@@ -340,10 +343,11 @@ int main(int argc, char * argv[])
 
   // Portscan each address in the block
   uint_t prefixBitmask = bitmaskifyPrefix(prefix);
+  uint_t address2;
   mylog("Address block to portscan: %d.%d.%d.%d/%d\n",
         (address & prefixBitmask) >> 24 & 0xff, (address & prefixBitmask) >> 16 & 0xff,
         (address & prefixBitmask) >> 8 & 0xff, (address & prefixBitmask) & 0xff, prefix);
-  for(uint_t address2 = address & prefixBitmask;               // Start with first address in range
+  for(address2 = address & prefixBitmask;               // Start with first address in range
       (address & prefixBitmask) == (address2 & prefixBitmask); // Continue while address in range
       address2++) {                                            // Increment to next address
     portScanAddress(address2);

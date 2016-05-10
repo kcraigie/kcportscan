@@ -11,7 +11,7 @@ int main(int argc, char * argv[])
   int ss = -1;
   int cs = -1;
 
-  sockaddr_in sa;
+  struct sockaddr_in sa;
   memset(&sa, 0, sizeof(sa));
   sa.sin_family = AF_INET;
 
